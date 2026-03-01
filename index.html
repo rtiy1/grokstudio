@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Grok 媒体工具站</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <main class="container">
+    <header class="header">
+      <h1>Grok 媒体工具站</h1>
+      <p>独立前端，填入 API URL 和 API Key 后即可使用。</p>
+    </header>
+
+    <section class="card">
+      <h2>连接配置</h2>
+      <div class="grid two">
+        <label>
+          <span>API URL</span>
+          <input id="apiUrl" type="text" placeholder="例如：https://your-domain.com" />
+        </label>
+        <label>
+          <span>API Key</span>
+          <input id="apiKey" type="password" placeholder="可选，留空表示不带鉴权" />
+        </label>
+      </div>
+      <div class="actions">
+        <button id="saveSettingsBtn" class="btn">保存配置</button>
+        <button id="testSettingsBtn" class="btn btn-outline">测试连接</button>
+      </div>
+      <div id="settingsStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+      <div class="tabs">
+        <button class="tab active" data-tab="t2i">生图</button>
+        <button class="tab" data-tab="i2i">图生图</button>
+        <button class="tab" data-tab="i2v">图转视频</button>
+      </div>
+
+      <div class="tab-panel active" id="tab-t2i">
+        <div class="grid two">
+          <label>
+            <span>模型</span>
+            <input id="t2iModel" type="text" value="grok-imagine-1.0" />
+          </label>
+          <label>
+            <span>尺寸</span>
+            <select id="t2iSize">
+              <option value="1024x1024">1024x1024</option>
+              <option value="1280x720">1280x720</option>
+              <option value="720x1280">720x1280</option>
+              <option value="1792x1024">1792x1024</option>
+              <option value="1024x1792">1024x1792</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          <span>提示词</span>
+          <textarea id="t2iPrompt" rows="3" placeholder="描述你想生成的图片"></textarea>
+        </label>
+        <div class="actions">
+          <button id="t2iRunBtn" class="btn">开始生图</button>
+        </div>
+        <div id="t2iStatus" class="status"></div>
+        <div id="t2iResult" class="result-grid"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-i2i">
+        <div class="grid two">
+          <label>
+            <span>模型</span>
+            <input id="i2iModel" type="text" value="grok-imagine-1.0-edit" />
+          </label>
+          <label>
+            <span>编辑图</span>
+            <input id="i2iImage" type="file" accept="image/*" />
+          </label>
+        </div>
+        <label>
+          <span>提示词</span>
+          <textarea id="i2iPrompt" rows="3" placeholder="描述如何编辑图片"></textarea>
+        </label>
+        <div class="actions">
+          <button id="i2iRunBtn" class="btn">开始图生图</button>
+        </div>
+        <div id="i2iStatus" class="status"></div>
+        <div id="i2iResult" class="result-grid"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-i2v">
+        <div class="grid three">
+          <label>
+            <span>模型</span>
+            <input id="i2vModel" type="text" value="grok-imagine-1.0-video" />
+          </label>
+          <label>
+            <span>比例</span>
+            <select id="i2vRatio">
+              <option value="16:9">16:9</option>
+              <option value="9:16">9:16</option>
+              <option value="3:2" selected>3:2</option>
+              <option value="2:3">2:3</option>
+              <option value="1:1">1:1</option>
+            </select>
+          </label>
+          <label>
+            <span>时长</span>
+            <select id="i2vLength">
+              <option value="6" selected>6</option>
+              <option value="10">10</option>
+              <option value="15">15</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid two">
+          <label>
+            <span>分辨率</span>
+            <select id="i2vResolution">
+              <option value="480p" selected>480p</option>
+              <option value="720p">720p</option>
+            </select>
+          </label>
+          <label>
+            <span>参考图（可选）</span>
+            <input id="i2vImage" type="file" accept="image/*" />
+          </label>
+        </div>
+        <label>
+          <span>提示词</span>
+          <textarea id="i2vPrompt" rows="3" placeholder="描述视频内容"></textarea>
+        </label>
+        <div class="actions">
+          <button id="i2vRunBtn" class="btn">开始图转视频</button>
+        </div>
+        <div id="i2vStatus" class="status"></div>
+        <div id="i2vResult" class="result-list"></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>作品库（MySQL）</h2>
+      <p class="tip">生图与图生图结果会自动入库，可在此查看与删除。</p>
+      <div class="actions">
+        <button id="galleryRefreshBtn" class="btn btn-outline">刷新作品库</button>
+      </div>
+      <div id="galleryStatus" class="status"></div>
+      <div id="galleryResult" class="result-grid"></div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+
+</html>

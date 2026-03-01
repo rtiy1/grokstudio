@@ -1,0 +1,41 @@
+services:
+  mysql:
+    container_name: media-studio-mysql
+    image: mysql:8.4
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: media_studio
+      MYSQL_USER: media_user
+      MYSQL_PASSWORD: media_password
+      MYSQL_ROOT_PASSWORD: root_password
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - media_studio_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  media-studio:
+    container_name: media-studio
+    build:
+      context: .
+    environment:
+      MEDIA_DB_URL: mysql+pymysql://media_user:media_password@mysql:3306/media_studio?charset=utf8mb4
+    ports:
+      - "8088:8088"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  media_studio_mysql_data:
