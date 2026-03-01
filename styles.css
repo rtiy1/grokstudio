@@ -105,6 +105,8 @@ textarea {
   display: flex;
   gap: 10px;
   margin-bottom: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .btn {
@@ -264,6 +266,32 @@ textarea {
   align-items: center;
   gap: 10px;
   margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.toggle-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 2px;
+  margin-bottom: 10px;
+}
+
+.toggle-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toggle-inline input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.t2i-item-status {
+  color: var(--muted);
 }
 
 .status-pill {

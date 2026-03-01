@@ -46,9 +46,10 @@
           <button id="t2iStartBtn" class="btn">开始生成</button>
           <button id="t2iStopBtn" class="btn btn-outline hidden">停止</button>
           <button id="t2iClearBtn" class="btn btn-outline">清空结果</button>
+          <button id="t2iDownloadAllBtn" class="btn btn-outline">下载全部</button>
         </div>
 
-        <div class="grid three">
+        <div class="grid four">
           <label>
             <span>模型</span>
             <input id="t2iModel" type="text" value="grok-imagine-1.0" />
@@ -71,6 +72,33 @@
               <option value="3">3</option>
             </select>
           </label>
+          <label>
+            <span>连接模式</span>
+            <select id="t2iMode">
+              <option value="auto" selected>Auto（WS 失败回退 SSE）</option>
+              <option value="ws">WS</option>
+              <option value="sse">SSE</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid two">
+          <label>
+            <span>NSFW</span>
+            <select id="t2iNsfw">
+              <option value="true">开启</option>
+              <option value="false" selected>关闭</option>
+            </select>
+          </label>
+          <label>
+            <span>自动过滤阈值（字节）</span>
+            <input id="t2iFinalMinBytes" type="number" value="100000" min="0" step="1000" />
+          </label>
+        </div>
+        <div class="toggle-line">
+          <label class="toggle-inline"><input id="t2iAutoScroll" type="checkbox" checked /> 自动滚动</label>
+          <label class="toggle-inline"><input id="t2iAutoDownload" type="checkbox" /> 自动下载</label>
+          <label class="toggle-inline"><input id="t2iReverseInsert" type="checkbox" /> 反向新增</label>
+          <label class="toggle-inline"><input id="t2iAutoFilter" type="checkbox" /> 自动过滤</label>
         </div>
         <label>
           <span>提示词</span>
@@ -79,6 +107,7 @@
         <div class="status-row">
           <span id="t2iStatusText" class="status-pill">未连接</span>
           <span id="t2iCountText" class="status">图片 0 张</span>
+          <span id="t2iLatencyText" class="status">平均耗时 -</span>
         </div>
         <div id="t2iStatus" class="status"></div>
         <div id="t2iResult" class="result-grid"></div>
@@ -98,6 +127,34 @@
           <label>
             <span>参考图 URL（可选）</span>
             <input id="i2iImageUrl" type="text" placeholder="https://..." />
+          </label>
+        </div>
+        <div class="grid three">
+          <label>
+            <span>尺寸</span>
+            <select id="i2iSize">
+              <option value="1024x1024">1024x1024</option>
+              <option value="1280x720">1280x720</option>
+              <option value="720x1280">720x1280</option>
+              <option value="1792x1024">1792x1024</option>
+              <option value="1024x1792">1024x1792</option>
+            </select>
+          </label>
+          <label>
+            <span>数量</span>
+            <select id="i2iCount">
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+          <label>
+            <span>返回格式</span>
+            <select id="i2iResponseFormat">
+              <option value="url" selected>url</option>
+              <option value="b64_json">b64_json</option>
+            </select>
           </label>
         </div>
         <div class="actions">

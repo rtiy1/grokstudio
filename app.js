@@ -1,6 +1,7 @@
 const STORAGE_KEY = "grok_media_studio_settings_v1";
 const GALLERY_LIMIT = 200;
 const VIDEO_REASONING_EFFORT = "low";
+const T2I_WS_OPEN_TIMEOUT_MS = 1800;
 
 const videoState = {
   sourceController: null,
@@ -25,6 +26,13 @@ const t2iState = {
   streamCards: new Map(),
   savedIds: new Set(),
   sequence: 0,
+  totalLatency: 0,
+  latencyCount: 0,
+  wsOpenedCount: 0,
+  mode: "auto",
+  fallbackTimer: null,
+  finalMinBytes: 100000,
+  isFallbackSwitching: false,
 };
 
 const i2iState = {
@@ -90,7 +98,7 @@ function setStatusChip(targetId, state, text) {
 }
 
 function buildHeaders(isJson = true) {
-  const apiKey = String(byId("apiKey").value || "").trim();
+  const apiKey = getApiKeyValue();
   const headers = {};
   if (isJson) {
     headers["Content-Type"] = "application/json";
@@ -145,6 +153,26 @@ function buildAbsoluteApiUrl(path, query = null) {
   return url.toString();
 }
 
+function getApiKeyValue() {
+  return String(byId("apiKey").value || "").trim();
+}
+
+function buildAbsoluteWsUrl(path, query = null) {
+  const baseUrl = normalizeBaseUrl(byId("apiUrl").value);
+  if (!baseUrl) {
+    throw new Error("请先填写 API URL");
+  }
+  const url = new URL(`${baseUrl}${path}`);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  if (query && typeof query === "object") {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null || value === "") continue;
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
 function extractErrorMessage(payload, fallback) {
   if (!payload) return fallback;
   if (typeof payload === "string") return payload;
@@ -156,6 +184,61 @@ function extractErrorMessage(payload, fallback) {
     payload?.raw ||
     fallback
   );
+}
+
+function inferImageMimeFromRaw(raw) {
+  const value = String(raw || "");
+  if (value.startsWith("iVBOR")) return "image/png";
+  if (value.startsWith("R0lGOD")) return "image/gif";
+  if (value.startsWith("/9j/")) return "image/jpeg";
+  return "image/jpeg";
+}
+
+function estimateBase64Bytes(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value) || value.startsWith("/")) return null;
+
+  let base64 = value;
+  if (value.startsWith("data:")) {
+    const commaIndex = value.indexOf(",");
+    base64 = commaIndex >= 0 ? value.slice(commaIndex + 1) : "";
+  }
+  base64 = base64.replace(/\s/g, "");
+  if (!base64) return 0;
+
+  let padding = 0;
+  if (base64.endsWith("==")) padding = 2;
+  else if (base64.endsWith("=")) padding = 1;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+async function downloadFileFromSrc(src, filename) {
+  const safeSrc = String(src || "").trim();
+  if (!safeSrc) return;
+
+  const link = document.createElement("a");
+  link.style.display = "none";
+
+  if (safeSrc.startsWith("data:")) {
+    link.href = safeSrc;
+  } else {
+    const response = await fetch(safeSrc, { mode: "cors" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    link.href = URL.createObjectURL(blob);
+  }
+
+  link.download = filename || "image";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  if (link.href.startsWith("blob:")) {
+    URL.revokeObjectURL(link.href);
+  }
 }
 
 function parseSseEvent(rawEvent) {
@@ -761,6 +844,7 @@ async function testConnection() {
       headers: buildHeaders(false),
     });
     const count = Array.isArray(payload?.data) ? payload.data.length : 0;
+    await loadT2iDefaults();
     setStatus(statusNode, `连接成功，可用模型 ${count} 个。`, "ok");
   } catch (error) {
     setStatus(statusNode, `连接失败：${error.message}`, "error");
@@ -781,11 +865,65 @@ function setT2iButtons(running) {
   }
 }
 
+function getT2iActiveCount() {
+  let active = 0;
+  for (const item of t2iState.controllers) {
+    if (!item) continue;
+    if (item.kind === "ws") {
+      if (item.socket && item.socket.readyState === WebSocket.OPEN) {
+        active += 1;
+      }
+      continue;
+    }
+    if (item.kind === "sse") {
+      if (item.controller && !item.controller.signal.aborted) {
+        active += 1;
+      }
+    }
+  }
+  return active;
+}
+
+function updateT2iLatencyText() {
+  const node = byId("t2iLatencyText");
+  if (!node) return;
+  if (t2iState.latencyCount > 0) {
+    const avg = Math.round(t2iState.totalLatency / t2iState.latencyCount);
+    node.textContent = `平均耗时 ${avg}ms`;
+  } else {
+    node.textContent = "平均耗时 -";
+  }
+}
+
 function updateT2iCountText() {
   const node = byId("t2iCountText");
   if (!node) return;
-  const active = t2iState.controllers.length;
-  node.textContent = `图片 ${t2iState.imageCount} 张 · 活跃 ${active} 任务`;
+  const active = getT2iActiveCount();
+  const modeLabel = t2iState.mode ? ` · ${String(t2iState.mode).toUpperCase()}` : "";
+  node.textContent = `图片 ${t2iState.imageCount} 张 · 活跃 ${active} 任务${modeLabel}`;
+  updateT2iLatencyText();
+}
+
+function updateT2iLatency(value) {
+  const safe = Number(value);
+  if (!Number.isFinite(safe) || safe <= 0) return;
+  t2iState.totalLatency += safe;
+  t2iState.latencyCount += 1;
+  updateT2iLatencyText();
+}
+
+function clearT2iFallbackTimer() {
+  if (t2iState.fallbackTimer) {
+    clearTimeout(t2iState.fallbackTimer);
+    t2iState.fallbackTimer = null;
+  }
+}
+
+function removeT2iController(taskId, kind) {
+  t2iState.controllers = t2iState.controllers.filter(
+    (item) => !(item.taskId === taskId && item.kind === kind)
+  );
+  updateT2iCountText();
 }
 
 function resetT2iState() {
@@ -795,6 +933,12 @@ function resetT2iState() {
   t2iState.savedIds.clear();
   t2iState.sequence = 0;
   t2iState.imageCount = 0;
+  t2iState.totalLatency = 0;
+  t2iState.latencyCount = 0;
+  t2iState.wsOpenedCount = 0;
+  t2iState.mode = String(byId("t2iMode")?.value || "auto").toLowerCase();
+  t2iState.isFallbackSwitching = false;
+  clearT2iFallbackTimer();
   updateT2iCountText();
 }
 
@@ -815,18 +959,39 @@ function normalizeT2iImageData(raw) {
     return {
       src: value,
       record: base64 ? { b64_json: base64 } : null,
+      bytes: estimateBase64Bytes(value),
     };
   }
   if (/^https?:\/\//i.test(value) || value.startsWith("/")) {
     return {
       src: value,
       record: { url: value },
+      bytes: null,
     };
   }
+  const mime = inferImageMimeFromRaw(value);
   return {
-    src: `data:image/png;base64,${value}`,
+    src: `data:${mime};base64,${value}`,
     record: { b64_json: value },
+    bytes: estimateBase64Bytes(value),
   };
+}
+
+function removeT2iCardByKey(imageKey) {
+  const key = String(imageKey || "");
+  if (!key) return;
+  const card = t2iState.streamCards.get(key);
+  if (!card) return;
+
+  card.remove();
+  t2iState.streamCards.delete(key);
+  if (t2iState.savedIds.has(key)) {
+    t2iState.savedIds.delete(key);
+  }
+  if (t2iState.imageCount > 0) {
+    t2iState.imageCount -= 1;
+  }
+  updateT2iCountText();
 }
 
 function createT2iCard(imageKey) {
@@ -856,9 +1021,22 @@ function createT2iCard(imageKey) {
   meta.appendChild(right);
   card.appendChild(meta);
 
-  resultNode.prepend(card);
+  if (byId("t2iReverseInsert")?.checked) {
+    resultNode.prepend(card);
+  } else {
+    resultNode.appendChild(card);
+  }
+
   t2iState.imageCount += 1;
   updateT2iCountText();
+
+  if (byId("t2iAutoScroll")?.checked) {
+    if (byId("t2iReverseInsert")?.checked) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+    }
+  }
   return card;
 }
 
@@ -867,6 +1045,15 @@ function upsertT2iImage(imageId, raw, isFinal, elapsedMs = null) {
   if (!normalized) return null;
 
   const key = String(imageId || `image-${++t2iState.sequence}`);
+  if (isFinal && byId("t2iAutoFilter")?.checked) {
+    const minBytes = Math.max(0, Number(byId("t2iFinalMinBytes")?.value || t2iState.finalMinBytes || 0));
+    const bytes = normalized.bytes;
+    if (bytes !== null && bytes < minBytes) {
+      removeT2iCardByKey(key);
+      return null;
+    }
+  }
+
   let card = t2iState.streamCards.get(key);
   if (!card) {
     card = createT2iCard(key);
@@ -877,6 +1064,10 @@ function upsertT2iImage(imageId, raw, isFinal, elapsedMs = null) {
   const image = card.querySelector("img");
   if (image) {
     image.src = normalized.src;
+  }
+  card.dataset.source = normalized.src;
+  if (normalized.record?.url) {
+    card.dataset.sourceUrl = normalized.record.url;
   }
 
   let link = card.querySelector("a");
@@ -938,7 +1129,11 @@ function handleT2iSsePayload(payload) {
     const isFinal = eventType === "image_generation.completed" || payload.stage === "final";
     const recordInfo = upsertT2iImage(imageId, raw, isFinal, payload.elapsed_ms);
     if (isFinal) {
+      updateT2iLatency(payload.elapsed_ms);
       saveT2iSingleRecord(recordInfo);
+      if (byId("t2iAutoDownload")?.checked && recordInfo?.record) {
+        void downloadT2iRecord(recordInfo.record, recordInfo.key);
+      }
     }
     return;
   }
@@ -948,7 +1143,11 @@ function handleT2iSsePayload(payload) {
     if (!raw) return;
     const imageId = payload.image_id || payload.imageId || "";
     const recordInfo = upsertT2iImage(imageId, raw, true, payload.elapsed_ms);
+    updateT2iLatency(payload.elapsed_ms);
     saveT2iSingleRecord(recordInfo);
+    if (byId("t2iAutoDownload")?.checked && recordInfo?.record) {
+      void downloadT2iRecord(recordInfo.record, recordInfo.key);
+    }
     return;
   }
 
@@ -960,6 +1159,7 @@ function handleT2iSsePayload(payload) {
 }
 
 async function createT2iTasks(prompt, aspectRatio, concurrent) {
+  const nsfwEnabled = String(byId("t2iNsfw")?.value || "false").toLowerCase() === "true";
   const taskIds = [];
   for (let i = 0; i < concurrent; i += 1) {
     const payload = await requestApi("/v1/public/imagine/start", {
@@ -968,7 +1168,7 @@ async function createT2iTasks(prompt, aspectRatio, concurrent) {
       body: JSON.stringify({
         prompt,
         aspect_ratio: aspectRatio,
-        nsfw: false,
+        nsfw: nsfwEnabled,
       }),
     });
     const taskId = String(payload?.task_id || "").trim();
@@ -980,9 +1180,135 @@ async function createT2iTasks(prompt, aspectRatio, concurrent) {
   return taskIds;
 }
 
-async function streamT2iTask(taskId) {
+async function loadT2iDefaults() {
+  try {
+    const payload = await requestApi("/v1/public/imagine/config", {
+      method: "GET",
+      headers: buildHeaders(false),
+    });
+    const minBytes = Number(payload?.final_min_bytes);
+    if (Number.isFinite(minBytes) && minBytes >= 0) {
+      t2iState.finalMinBytes = minBytes;
+      const input = byId("t2iFinalMinBytes");
+      if (input) input.value = String(minBytes);
+    }
+    if (typeof payload?.nsfw === "boolean") {
+      const nsfwSelect = byId("t2iNsfw");
+      if (nsfwSelect) nsfwSelect.value = payload.nsfw ? "true" : "false";
+    }
+  } catch (_) {
+    // ignore: endpoint may not exist on some services
+  }
+}
+
+async function downloadT2iRecord(record, key) {
+  if (!record) return;
+  let src = "";
+  let ext = "png";
+  if (record.url) {
+    src = String(record.url).trim();
+    const lower = src.toLowerCase();
+    if (lower.includes(".webp")) ext = "webp";
+    else if (lower.includes(".jpg") || lower.includes(".jpeg")) ext = "jpg";
+    else if (lower.includes(".png")) ext = "png";
+  } else if (record.b64_json) {
+    const mime = inferImageMimeFromRaw(record.b64_json);
+    ext = mime.includes("png") ? "png" : mime.includes("gif") ? "gif" : "jpg";
+    src = `data:${mime};base64,${record.b64_json}`;
+  }
+  if (!src) return;
+
+  const safeKey = String(key || "image").replace(/[^\w-]/g, "_");
+  const filename = `t2i_${safeKey}_${Date.now()}.${ext}`;
+  try {
+    await downloadFileFromSrc(src, filename);
+  } catch (_) {
+    const link = document.createElement("a");
+    link.href = src;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+}
+
+async function downloadAllT2iImages() {
+  const cards = Array.from(byId("t2iResult")?.querySelectorAll(".result-card") || []);
+  if (cards.length === 0) {
+    setStatus(byId("t2iStatus"), "没有可下载的图片。", "error");
+    return;
+  }
+
+  let success = 0;
+  for (const card of cards) {
+    const src = String(card.dataset.source || "").trim();
+    if (!src) continue;
+    const key = String(card.dataset.imageKey || "image").replace(/[^\w-]/g, "_");
+    const lower = src.toLowerCase();
+    let ext = "png";
+    if (lower.includes(".webp")) ext = "webp";
+    else if (lower.includes(".jpg") || lower.includes(".jpeg")) ext = "jpg";
+    else if (lower.includes(".png")) ext = "png";
+    const filename = `t2i_${key}_${Date.now()}.${ext}`;
+
+    try {
+      await downloadFileFromSrc(src, filename);
+      success += 1;
+    } catch (_) {
+      const link = document.createElement("a");
+      link.href = src;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      success += 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+  setStatus(byId("t2iStatus"), `已触发下载 ${success} 张图片。`, "ok");
+}
+
+function closeAllT2iStreams() {
+  for (const item of t2iState.controllers) {
+    if (!item) continue;
+    if (item.kind === "sse") {
+      try {
+        item.controller.abort();
+      } catch (_) {
+        // ignore
+      }
+      continue;
+    }
+    if (item.kind === "ws") {
+      try {
+        item.socket.close(1000, "client stop");
+      } catch (_) {
+        // ignore
+      }
+    }
+  }
+}
+
+function onT2iStreamSettled() {
+  if (!t2iState.isRunning) return;
+  if (t2iState.isFallbackSwitching) return;
+  if (t2iState.mode === "auto" && t2iState.wsOpenedCount === 0 && t2iState.fallbackTimer) return;
+  const active = getT2iActiveCount();
+  if (active > 0) return;
+  t2iState.isRunning = false;
+  t2iState.taskIds = [];
+  setT2iButtons(false);
+  setStatusChip("t2iStatusText", "", "连接关闭");
+  setStatus(byId("t2iStatus"), "流式连接已关闭。", "error");
+}
+
+async function streamT2iTaskSse(taskId) {
   const controller = new AbortController();
-  t2iState.controllers.push({ taskId, controller });
+  t2iState.controllers.push({ taskId, controller, kind: "sse" });
   updateT2iCountText();
 
   try {
@@ -1006,7 +1332,10 @@ async function streamT2iTask(taskId) {
 
     await consumeSseStream(response, (data) => {
       if (!t2iState.isRunning) return;
-      if (!data || data === "[DONE]") return;
+      if (!data) return;
+      if (data === "[DONE]") {
+        return;
+      }
       try {
         const payload = JSON.parse(data);
         handleT2iSsePayload(payload);
@@ -1020,9 +1349,81 @@ async function streamT2iTask(taskId) {
       setStatusChip("t2iStatusText", "error", "连接错误");
     }
   } finally {
-    t2iState.controllers = t2iState.controllers.filter((item) => item.taskId !== taskId);
-    updateT2iCountText();
+    removeT2iController(taskId, "sse");
+    onT2iStreamSettled();
   }
+}
+
+async function streamT2iTaskWs(taskId) {
+  let socket = null;
+  try {
+    const query = { task_id: taskId, t: Date.now() };
+    const apiKey = getApiKeyValue();
+    if (apiKey) {
+      query.public_key = apiKey;
+    }
+    const wsUrl = buildAbsoluteWsUrl("/v1/public/imagine/ws", query);
+    socket = new WebSocket(wsUrl);
+  } catch (error) {
+    throw new Error(error?.message || "WebSocket 初始化失败");
+  }
+
+  const controllerItem = { taskId, socket, kind: "ws" };
+  t2iState.controllers.push(controllerItem);
+  updateT2iCountText();
+
+  await new Promise((resolve, reject) => {
+    let opened = false;
+    const openTimeout = setTimeout(() => {
+      if (opened) return;
+      try {
+        socket.close();
+      } catch (_) {
+        // ignore
+      }
+      reject(new Error("WebSocket 连接超时"));
+    }, T2I_WS_OPEN_TIMEOUT_MS);
+
+    socket.onopen = () => {
+      opened = true;
+      clearTimeout(openTimeout);
+      t2iState.wsOpenedCount += 1;
+      clearT2iFallbackTimer();
+      updateT2iCountText();
+      setStatusChip("t2iStatusText", "connected", "WS 生成中");
+    };
+
+    socket.onmessage = (event) => {
+      if (!t2iState.isRunning) return;
+      const data = String(event?.data || "");
+      if (!data || data === "[DONE]") return;
+      try {
+        const payload = JSON.parse(data);
+        handleT2iSsePayload(payload);
+      } catch (_) {
+        // ignore invalid chunk
+      }
+    };
+
+    socket.onerror = () => {
+      if (!opened) {
+        clearTimeout(openTimeout);
+        reject(new Error("WebSocket 连接失败"));
+        return;
+      }
+      if (t2iState.isRunning) {
+        setStatus(byId("t2iStatus"), "WebSocket 连接异常。", "error");
+      }
+    };
+
+    socket.onclose = () => {
+      clearTimeout(openTimeout);
+      resolve();
+    };
+  }).finally(() => {
+    removeT2iController(taskId, "ws");
+    onT2iStreamSettled();
+  });
 }
 
 async function stopT2iRemote(taskIds) {
@@ -1098,6 +1499,7 @@ async function startTextToImage() {
   const statusNode = byId("t2iStatus");
   const prompt = byId("t2iPrompt").value.trim();
   const size = byId("t2iSize").value;
+  const mode = String(byId("t2iMode")?.value || "auto").toLowerCase();
   const concurrent = Number(byId("t2iConcurrent")?.value || "1");
   const aspectRatio = T2I_SIZE_TO_RATIO[size] || "1:1";
 
@@ -1113,6 +1515,8 @@ async function startTextToImage() {
 
   clearT2iResults();
   t2iState.isRunning = true;
+  t2iState.mode = mode;
+  t2iState.wsOpenedCount = 0;
   setT2iButtons(true);
   setStatusChip("t2iStatusText", "connecting", "连接中");
   setStatus(statusNode, "正在创建生图任务...");
@@ -1122,7 +1526,9 @@ async function startTextToImage() {
     taskIds = await createT2iTasks(prompt, aspectRatio, Math.max(1, Math.min(3, concurrent)));
   } catch (error) {
     const message = String(error?.message || "");
-    const maybeUnsupported = /404|not\s*found|unsupported|route/i.test(message.toLowerCase());
+    const maybeUnsupported = /404|401|403|not\s*found|unsupported|route|invalid_api_key|authentication/i.test(
+      message.toLowerCase()
+    );
     t2iState.isRunning = false;
     setT2iButtons(false);
     if (maybeUnsupported) {
@@ -1135,17 +1541,46 @@ async function startTextToImage() {
   }
 
   t2iState.taskIds = taskIds;
-  setStatusChip("t2iStatusText", "connected", "生成中");
-  setStatus(statusNode, `任务已创建，活跃 ${taskIds.length} 个。`);
+  updateT2iCountText();
 
-  await Promise.allSettled(taskIds.map((taskId) => streamT2iTask(taskId)));
-  if (t2iState.isRunning) {
-    t2iState.isRunning = false;
-    t2iState.taskIds = [];
-    setT2iButtons(false);
-    setStatusChip("t2iStatusText", "connected", "完成");
-    setStatus(statusNode, "生图任务完成。", "ok");
-    await loadGallery(false);
+  if (mode === "sse") {
+    setStatusChip("t2iStatusText", "connected", "SSE 生成中");
+    setStatus(statusNode, `任务已创建，SSE 活跃 ${taskIds.length} 个。`);
+    for (const taskId of taskIds) {
+      void streamT2iTaskSse(taskId);
+    }
+    return;
+  }
+
+  setStatusChip("t2iStatusText", "connected", "WS 连接中");
+  setStatus(statusNode, `任务已创建，WS 活跃 ${taskIds.length} 个。`);
+  for (const taskId of taskIds) {
+    void streamT2iTaskWs(taskId).catch((error) => {
+      if (!t2iState.isRunning) return;
+      if (mode === "ws") {
+        setStatus(statusNode, `WebSocket 连接失败：${error.message}`, "error");
+        setStatusChip("t2iStatusText", "error", "WS 失败");
+      }
+    });
+  }
+
+  if (mode === "auto") {
+    clearT2iFallbackTimer();
+    t2iState.fallbackTimer = setTimeout(() => {
+      if (!t2iState.isRunning) return;
+      if (t2iState.wsOpenedCount > 0) return;
+      t2iState.isFallbackSwitching = true;
+      closeAllT2iStreams();
+      t2iState.controllers = [];
+      updateT2iCountText();
+      t2iState.mode = "sse";
+      setStatusChip("t2iStatusText", "connected", "SSE 回退中");
+      setStatus(statusNode, "WS 不可用，已自动切换到 SSE。", "ok");
+      for (const taskId of taskIds) {
+        void streamT2iTaskSse(taskId);
+      }
+      t2iState.isFallbackSwitching = false;
+    }, T2I_WS_OPEN_TIMEOUT_MS);
   }
 }
 
@@ -1155,13 +1590,9 @@ async function stopTextToImage() {
   const taskIds = [...t2iState.taskIds];
 
   t2iState.isRunning = false;
-  for (const item of t2iState.controllers) {
-    try {
-      item.controller.abort();
-    } catch (_) {
-      // ignore
-    }
-  }
+  clearT2iFallbackTimer();
+  t2iState.isFallbackSwitching = false;
+  closeAllT2iStreams();
   t2iState.controllers = [];
   t2iState.taskIds = [];
   setT2iButtons(false);
@@ -1231,6 +1662,9 @@ async function startImageToImage() {
   const startBtn = byId("i2iStartBtn");
   const model = byId("i2iModel").value.trim() || "grok-imagine-1.0-edit";
   const prompt = byId("i2iPrompt").value.trim();
+  const size = byId("i2iSize")?.value || "1024x1024";
+  const count = Math.max(1, Math.min(10, Number(byId("i2iCount")?.value || "1")));
+  const responseFormat = byId("i2iResponseFormat")?.value || "url";
 
   let file = null;
   try {
@@ -1261,7 +1695,9 @@ async function startImageToImage() {
     const form = new FormData();
     form.append("model", model);
     form.append("prompt", prompt);
-    form.append("response_format", "url");
+    form.append("size", size);
+    form.append("n", String(count));
+    form.append("response_format", responseFormat);
     form.append("image", file, file.name || "image.png");
 
     const payload = await requestApi("/v1/images/edits", {
@@ -1505,7 +1941,9 @@ async function startImageToVideo() {
     taskId = await createVideoTask();
   } catch (error) {
     const message = String(error?.message || "");
-    const maybeUnsupported = /404|not\s*found|unsupported|route/i.test(message.toLowerCase());
+    const maybeUnsupported = /404|401|403|not\s*found|unsupported|route|invalid_api_key|authentication/i.test(
+      message.toLowerCase()
+    );
 
     videoState.isRunning = false;
     setVideoButtons(false);
@@ -1622,7 +2060,10 @@ function bindEvents() {
   const t2iStartBtn = byId("t2iStartBtn");
   const t2iStopBtn = byId("t2iStopBtn");
   const t2iClearBtn = byId("t2iClearBtn");
+  const t2iDownloadAllBtn = byId("t2iDownloadAllBtn");
   const t2iPromptInput = byId("t2iPrompt");
+  const t2iModeSelect = byId("t2iMode");
+  const t2iFinalMinBytesInput = byId("t2iFinalMinBytes");
 
   const i2iStartBtn = byId("i2iStartBtn");
   const i2iClearBtn = byId("i2iClearBtn");
@@ -1648,6 +2089,24 @@ function bindEvents() {
       clearT2iResults();
       setStatus(byId("t2iStatus"), "已清空生图结果。", "ok");
       setStatusChip("t2iStatusText", "", "未连接");
+    });
+  }
+  if (t2iDownloadAllBtn) {
+    t2iDownloadAllBtn.addEventListener("click", () => {
+      void downloadAllT2iImages();
+    });
+  }
+  if (t2iModeSelect) {
+    t2iModeSelect.addEventListener("change", () => {
+      t2iState.mode = String(t2iModeSelect.value || "auto").toLowerCase();
+      updateT2iCountText();
+    });
+  }
+  if (t2iFinalMinBytesInput) {
+    t2iFinalMinBytesInput.addEventListener("change", () => {
+      const safe = Math.max(0, Number(t2iFinalMinBytesInput.value || t2iState.finalMinBytes || 0));
+      t2iState.finalMinBytes = safe;
+      t2iFinalMinBytesInput.value = String(safe);
     });
   }
   if (t2iPromptInput) {
@@ -1769,8 +2228,10 @@ function boot() {
   initSettings();
 
   resetT2iState();
+  t2iState.mode = String(byId("t2iMode")?.value || "auto").toLowerCase();
   setT2iButtons(false);
   setStatusChip("t2iStatusText", "", "未连接");
+  updateT2iLatencyText();
 
   clearI2iFileSelection();
   setStatusChip("i2iStatusText", "", "未开始");
@@ -1780,6 +2241,9 @@ function boot() {
   setVideoStatusChip("", "未连接");
 
   bindEvents();
+  if (normalizeBaseUrl(byId("apiUrl")?.value)) {
+    void loadT2iDefaults();
+  }
   loadGallery(true);
 }
 
