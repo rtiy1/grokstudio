@@ -16,20 +16,24 @@ BASE_DIR = Path(__file__).resolve().parent
 INDEX_FILE = BASE_DIR / "index.html"
 STYLES_FILE = BASE_DIR / "styles.css"
 SCRIPT_FILE = BASE_DIR / "app.js"
+DEFAULT_DB_PATH = BASE_DIR / "media_studio.db"
 
-DEFAULT_DB_URL = (
-    "mysql+pymysql://media_user:media_password@mysql:3306/"
-    "media_studio?charset=utf8mb4"
-)
+DEFAULT_DB_URL = f"sqlite:///{DEFAULT_DB_PATH.as_posix()}"
 MEDIA_DB_URL = os.getenv("MEDIA_DB_URL", DEFAULT_DB_URL)
 MEDIA_DB_INIT_RETRY = int(os.getenv("MEDIA_DB_INIT_RETRY", "30"))
 MEDIA_DB_INIT_INTERVAL = float(os.getenv("MEDIA_DB_INIT_INTERVAL", "2"))
 
-engine: Engine = create_engine(
-    MEDIA_DB_URL,
-    pool_pre_ping=True,
-    pool_recycle=1800,
-)
+
+def build_engine() -> Engine:
+    engine_kwargs: dict[str, object] = {"pool_pre_ping": True}
+    if MEDIA_DB_URL.startswith("sqlite"):
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        engine_kwargs["pool_recycle"] = 1800
+    return create_engine(MEDIA_DB_URL, **engine_kwargs)
+
+
+engine: Engine = build_engine()
 
 
 def utc_now_datetime() -> datetime:
@@ -60,7 +64,18 @@ def datetime_to_iso(value: datetime | str | None) -> str:
             utc_value = value.astimezone(timezone.utc)
         return utc_value.isoformat().replace("+00:00", "Z")
     if isinstance(value, str):
-        return value
+        normalized = value.strip().replace("Z", "+00:00")
+        if not normalized:
+            return utc_now_datetime().replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.isoformat().replace("+00:00", "Z")
     return utc_now_datetime().replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -78,24 +93,28 @@ def database_info() -> dict:
 
 
 def initialize_database() -> None:
-    create_sql = """
+    create_table_sql = """
     CREATE TABLE IF NOT EXISTS media_assets (
-        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        media_type VARCHAR(16) NOT NULL,
-        task_type VARCHAR(64) NULL,
-        model VARCHAR(128) NULL,
-        prompt LONGTEXT NULL,
-        source_url LONGTEXT NOT NULL,
-        created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-        KEY idx_media_assets_type_created (media_type, created_at, id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        media_type TEXT NOT NULL,
+        task_type TEXT NULL,
+        model TEXT NULL,
+        prompt TEXT NULL,
+        source_url TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    """
+    create_index_sql = """
+    CREATE INDEX IF NOT EXISTS idx_media_assets_type_created
+    ON media_assets (media_type, created_at, id);
     """
 
     last_error: Exception | None = None
     for attempt in range(1, MEDIA_DB_INIT_RETRY + 1):
         try:
             with engine.begin() as connection:
-                connection.execute(text(create_sql))
+                connection.execute(text(create_table_sql))
+                connection.execute(text(create_index_sql))
             return
         except SQLAlchemyError as error:
             last_error = error
@@ -103,7 +122,7 @@ def initialize_database() -> None:
                 break
             time.sleep(MEDIA_DB_INIT_INTERVAL)
 
-    raise RuntimeError("数据库初始化失败，请检查 MySQL 配置与连通性") from last_error
+    raise RuntimeError("数据库初始化失败，请检查 SQLite 配置与连通性") from last_error
 
 
 class MediaCreate(BaseModel):

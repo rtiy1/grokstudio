@@ -4,10 +4,11 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV MEDIA_DB_URL=mysql+pymysql://media_user:media_password@mysql:3306/media_studio?charset=utf8mb4
+ENV MEDIA_DB_URL=sqlite:////app/data/media_studio.db
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+RUN mkdir -p /app/data
 
 COPY . /app
 
