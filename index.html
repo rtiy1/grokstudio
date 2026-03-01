@@ -4,19 +4,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Grok 媒体工具站</title>
+  <title>Grok Media Studio</title>
+  <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-sans/style.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/geist@1.0.0/dist/fonts/geist-mono/style.css" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 
 <body>
-  <main class="container">
-    <header class="header">
-      <h1>Grok 媒体工具站</h1>
-      <p>独立前端，填入 API URL 和 API Key 后即可使用。</p>
+  <main class="page">
+    <header class="topbar">
+      <div>
+        <h1>Grok Media Studio</h1>
+        <p>前端按 grok2api 风格实现，仅使用 OpenAI 兼容接口。</p>
+      </div>
     </header>
 
-    <section class="card">
-      <h2>连接配置</h2>
+    <section class="panel">
+      <div class="panel-title">连接配置</div>
       <div class="grid two">
         <label>
           <span>API URL</span>
@@ -24,7 +28,7 @@
         </label>
         <label>
           <span>API Key</span>
-          <input id="apiKey" type="password" placeholder="可选，留空表示不带鉴权" />
+          <input id="apiKey" type="password" placeholder="Bearer Token" />
         </label>
       </div>
       <div class="actions">
@@ -34,243 +38,272 @@
       <div id="settingsStatus" class="status"></div>
     </section>
 
-    <section class="card">
+    <section class="panel">
       <div class="tabs">
-        <button class="tab active" data-tab="t2i">生图</button>
-        <button class="tab" data-tab="i2i">图生图</button>
-        <button class="tab" data-tab="i2v">图转视频</button>
+        <button class="tab active" data-tab="t2i">Imagine 瀑布流</button>
+        <button class="tab" data-tab="i2i">Image 编辑</button>
+        <button class="tab" data-tab="i2v">Video 生成</button>
       </div>
 
       <div class="tab-panel active" id="tab-t2i">
-        <div class="actions">
-          <button id="t2iStartBtn" class="btn">开始生成</button>
-          <button id="t2iStopBtn" class="btn btn-outline hidden">停止</button>
-          <button id="t2iClearBtn" class="btn btn-outline">清空结果</button>
-          <button id="t2iDownloadAllBtn" class="btn btn-outline">下载全部</button>
+        <div class="module-head">
+          <h2>Imagine 瀑布流</h2>
+          <p>基于 OpenAI Images 接口循环生成并实时堆叠展示。</p>
         </div>
 
-        <div class="grid four">
+        <div class="card">
+          <div class="card-title">生成设置</div>
+          <div class="grid three">
+            <label>
+              <span>模型</span>
+              <input id="t2iModel" type="text" value="grok-imagine-1.0" />
+            </label>
+            <label>
+              <span>宽高比</span>
+              <select id="t2iRatio">
+                <option value="2:3" selected>2:3 竖图</option>
+                <option value="1:1">1:1 方图</option>
+                <option value="3:2">3:2 横图</option>
+                <option value="16:9">16:9 宽屏</option>
+                <option value="9:16">9:16 竖屏</option>
+              </select>
+            </label>
+            <label>
+              <span>并发数量</span>
+              <select id="t2iConcurrent">
+                <option value="1" selected>1 个任务</option>
+                <option value="2">2 个任务</option>
+                <option value="3">3 个任务</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              <span>返回格式</span>
+              <select id="t2iResponseFormat">
+                <option value="url" selected>url</option>
+                <option value="b64_json">b64_json</option>
+              </select>
+            </label>
+            <label>
+              <span>自动过滤阈值（字节）</span>
+              <input id="t2iFinalMinBytes" type="number" min="0" step="1000" value="100000" />
+            </label>
+          </div>
+
+          <div class="toggle-line">
+            <label class="toggle-inline"><input id="t2iAutoScroll" type="checkbox" checked /> 自动滚动</label>
+            <label class="toggle-inline"><input id="t2iAutoDownload" type="checkbox" /> 自动下载</label>
+            <label class="toggle-inline"><input id="t2iReverseInsert" type="checkbox" /> 反向新增</label>
+            <label class="toggle-inline"><input id="t2iAutoFilter" type="checkbox" /> 自动过滤</label>
+          </div>
+
           <label>
-            <span>模型</span>
-            <input id="t2iModel" type="text" value="grok-imagine-1.0" />
+            <span>提示词</span>
+            <textarea id="t2iPrompt" rows="3" placeholder="描述你想要的画面，例如：未来城市霓虹雨夜，广角摄影"></textarea>
           </label>
-          <label>
-            <span>尺寸</span>
-            <select id="t2iSize">
-              <option value="1024x1024">1024x1024</option>
-              <option value="1280x720">1280x720</option>
-              <option value="720x1280">720x1280</option>
-              <option value="1792x1024">1792x1024</option>
-              <option value="1024x1792">1024x1792</option>
-            </select>
-          </label>
-          <label>
-            <span>并发</span>
-            <select id="t2iConcurrent">
-              <option value="1" selected>1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-            </select>
-          </label>
-          <label>
-            <span>连接模式</span>
-            <select id="t2iMode">
-              <option value="auto" selected>Auto（WS 失败回退 SSE）</option>
-              <option value="ws">WS</option>
-              <option value="sse">SSE</option>
-            </select>
-          </label>
+
+          <div class="actions">
+            <button id="t2iStartBtn" class="btn">开始生成</button>
+            <button id="t2iStopBtn" class="btn btn-outline hidden">停止</button>
+            <button id="t2iClearBtn" class="btn btn-outline">清空</button>
+            <button id="t2iDownloadAllBtn" class="btn btn-outline">下载全部</button>
+          </div>
         </div>
-        <div class="grid two">
-          <label>
-            <span>NSFW</span>
-            <select id="t2iNsfw">
-              <option value="true">开启</option>
-              <option value="false" selected>关闭</option>
-            </select>
-          </label>
-          <label>
-            <span>自动过滤阈值（字节）</span>
-            <input id="t2iFinalMinBytes" type="number" value="100000" min="0" step="1000" />
-          </label>
+
+        <div class="card">
+          <div class="status-row">
+            <span id="t2iStatusText" class="status-pill">未连接</span>
+            <span id="t2iCountValue" class="status-text">图片 0</span>
+            <span id="t2iActiveValue" class="status-text">活跃任务 0</span>
+            <span id="t2iLatencyValue" class="status-text">平均耗时 -</span>
+          </div>
+          <div id="t2iStatus" class="status"></div>
         </div>
-        <div class="toggle-line">
-          <label class="toggle-inline"><input id="t2iAutoScroll" type="checkbox" checked /> 自动滚动</label>
-          <label class="toggle-inline"><input id="t2iAutoDownload" type="checkbox" /> 自动下载</label>
-          <label class="toggle-inline"><input id="t2iReverseInsert" type="checkbox" /> 反向新增</label>
-          <label class="toggle-inline"><input id="t2iAutoFilter" type="checkbox" /> 自动过滤</label>
+
+        <div class="card">
+          <div class="card-title">瀑布流</div>
+          <div id="t2iEmpty" class="empty">等待生成中</div>
+          <div id="t2iResult" class="waterfall"></div>
         </div>
-        <label>
-          <span>提示词</span>
-          <textarea id="t2iPrompt" rows="3" placeholder="描述你想生成的图片"></textarea>
-        </label>
-        <div class="status-row">
-          <span id="t2iStatusText" class="status-pill">未连接</span>
-          <span id="t2iCountText" class="status">图片 0 张</span>
-          <span id="t2iLatencyText" class="status">平均耗时 -</span>
-        </div>
-        <div id="t2iStatus" class="status"></div>
-        <div id="t2iResult" class="result-grid"></div>
       </div>
 
       <div class="tab-panel" id="tab-i2i">
-        <div class="actions">
-          <button id="i2iStartBtn" class="btn">开始图生图</button>
-          <button id="i2iClearBtn" class="btn btn-outline">清空结果</button>
+        <div class="module-head">
+          <h2>Image 编辑</h2>
+          <p>OpenAI Images Edits 接口，支持 URL 或上传文件。</p>
         </div>
 
-        <div class="grid two">
+        <div class="card">
+          <div class="card-title">编辑设置</div>
+          <div class="grid three">
+            <label>
+              <span>模型</span>
+              <input id="i2iModel" type="text" value="grok-imagine-1.0-edit" />
+            </label>
+            <label>
+              <span>尺寸</span>
+              <select id="i2iSize">
+                <option value="1024x1024">1024x1024</option>
+                <option value="1280x720">1280x720</option>
+                <option value="720x1280">720x1280</option>
+                <option value="1792x1024">1792x1024</option>
+                <option value="1024x1792">1024x1792</option>
+              </select>
+            </label>
+            <label>
+              <span>数量</span>
+              <select id="i2iCount">
+                <option value="1" selected>1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label>
+              <span>返回格式</span>
+              <select id="i2iResponseFormat">
+                <option value="url" selected>url</option>
+                <option value="b64_json">b64_json</option>
+              </select>
+            </label>
+            <label>
+              <span>参考图 URL（可选）</span>
+              <input id="i2iImageUrl" type="text" placeholder="https://..." />
+            </label>
+          </div>
+
+          <div class="actions">
+            <input id="i2iImageFile" class="hidden" type="file" accept="image/*" />
+            <button id="i2iSelectImageBtn" class="btn btn-outline" type="button">上传参考图</button>
+            <button id="i2iClearImageBtn" class="btn btn-outline" type="button">清除参考图</button>
+            <span id="i2iImageFileName" class="file-name">未选择文件</span>
+          </div>
+
           <label>
-            <span>模型</span>
-            <input id="i2iModel" type="text" value="grok-imagine-1.0-edit" />
+            <span>提示词</span>
+            <textarea id="i2iPrompt" rows="3" placeholder="描述如何编辑图片"></textarea>
           </label>
-          <label>
-            <span>参考图 URL（可选）</span>
-            <input id="i2iImageUrl" type="text" placeholder="https://..." />
-          </label>
+
+          <div class="actions">
+            <button id="i2iStartBtn" class="btn">开始图生图</button>
+            <button id="i2iClearBtn" class="btn btn-outline">清空结果</button>
+          </div>
+
+          <div class="status-row">
+            <span id="i2iStatusText" class="status-pill">未开始</span>
+          </div>
+          <div id="i2iStatus" class="status"></div>
         </div>
-        <div class="grid three">
-          <label>
-            <span>尺寸</span>
-            <select id="i2iSize">
-              <option value="1024x1024">1024x1024</option>
-              <option value="1280x720">1280x720</option>
-              <option value="720x1280">720x1280</option>
-              <option value="1792x1024">1792x1024</option>
-              <option value="1024x1792">1024x1792</option>
-            </select>
-          </label>
-          <label>
-            <span>数量</span>
-            <select id="i2iCount">
-              <option value="1" selected>1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-            </select>
-          </label>
-          <label>
-            <span>返回格式</span>
-            <select id="i2iResponseFormat">
-              <option value="url" selected>url</option>
-              <option value="b64_json">b64_json</option>
-            </select>
-          </label>
+
+        <div class="card">
+          <div id="i2iResult" class="result-grid"></div>
         </div>
-        <div class="actions">
-          <input id="i2iImageFile" class="hidden" type="file" accept="image/*" />
-          <button id="i2iSelectImageBtn" class="btn btn-outline" type="button">上传参考图</button>
-          <button id="i2iClearImageBtn" class="btn btn-outline" type="button">清除参考图</button>
-          <span id="i2iImageFileName" class="file-name">未选择文件</span>
-        </div>
-        <label>
-          <span>提示词</span>
-          <textarea id="i2iPrompt" rows="3" placeholder="描述如何编辑图片"></textarea>
-        </label>
-        <div class="status-row">
-          <span id="i2iStatusText" class="status-pill">未开始</span>
-        </div>
-        <div id="i2iStatus" class="status"></div>
-        <div id="i2iResult" class="result-grid"></div>
       </div>
 
       <div class="tab-panel" id="tab-i2v">
-        <div class="actions">
-          <button id="i2vStartBtn" class="btn">开始生成</button>
-          <button id="i2vStopBtn" class="btn btn-outline hidden">停止</button>
-          <button id="i2vClearBtn" class="btn btn-outline">清空预览</button>
+        <div class="module-head">
+          <h2>Video 视频生成</h2>
+          <p>仅使用 OpenAI `chat/completions` 兼容格式生成视频。</p>
         </div>
 
-        <label>
-          <span>提示词</span>
-          <textarea id="i2vPrompt" rows="3" placeholder="例如：街头霓虹雨夜，慢镜头，胶片质感"></textarea>
-        </label>
-
-        <div class="grid two">
+        <div class="card">
+          <div class="card-title">生成设置</div>
           <label>
-            <span>参考图 URL / Data URL（可选）</span>
-            <input id="i2vImageUrl" type="text" placeholder="https://... 或 data:image/..." />
+            <span>提示词</span>
+            <textarea id="i2vPrompt" rows="3" placeholder="例如：街头霓虹雨夜，慢镜头，胶片质感"></textarea>
           </label>
-          <label>
-            <span>模型</span>
-            <input id="i2vModel" type="text" value="grok-imagine-1.0-video" />
-          </label>
+
+          <div class="grid two">
+            <label>
+              <span>参考图 URL / Data URL（可选）</span>
+              <input id="i2vImageUrl" type="text" placeholder="https://... 或 data:image/..." />
+            </label>
+            <label>
+              <span>模型</span>
+              <input id="i2vModel" type="text" value="grok-imagine-1.0-video" />
+            </label>
+          </div>
+
+          <div class="grid four">
+            <label>
+              <span>比例</span>
+              <select id="i2vRatio">
+                <option value="3:2" selected>3:2</option>
+                <option value="2:3">2:3</option>
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="1:1">1:1</option>
+              </select>
+            </label>
+            <label>
+              <span>时长</span>
+              <select id="i2vLength">
+                <option value="6" selected>6</option>
+                <option value="10">10</option>
+                <option value="15">15</option>
+              </select>
+            </label>
+            <label>
+              <span>分辨率</span>
+              <select id="i2vResolution">
+                <option value="480p" selected>480p</option>
+                <option value="720p">720p</option>
+              </select>
+            </label>
+            <label>
+              <span>风格预设</span>
+              <select id="i2vPreset">
+                <option value="normal" selected>normal</option>
+                <option value="fun">fun</option>
+                <option value="spicy">spicy</option>
+                <option value="custom">custom</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="actions">
+            <input id="i2vImageFile" class="hidden" type="file" accept="image/*" />
+            <button id="i2vSelectImageBtn" class="btn btn-outline" type="button">上传参考图</button>
+            <button id="i2vClearImageBtn" class="btn btn-outline" type="button">清除参考图</button>
+            <span id="i2vImageFileName" class="file-name">未选择文件</span>
+          </div>
+
+          <div class="actions">
+            <button id="i2vStartBtn" class="btn">开始生成</button>
+            <button id="i2vStopBtn" class="btn btn-outline hidden">停止</button>
+            <button id="i2vClearBtn" class="btn btn-outline">清空预览</button>
+          </div>
         </div>
 
-        <div class="grid four">
-          <label>
-            <span>比例</span>
-            <select id="i2vRatio">
-              <option value="3:2" selected>3:2</option>
-              <option value="2:3">2:3</option>
-              <option value="16:9">16:9</option>
-              <option value="9:16">9:16</option>
-              <option value="1:1">1:1</option>
-            </select>
-          </label>
-          <label>
-            <span>时长</span>
-            <select id="i2vLength">
-              <option value="6" selected>6</option>
-              <option value="10">10</option>
-              <option value="15">15</option>
-            </select>
-          </label>
-          <label>
-            <span>分辨率</span>
-            <select id="i2vResolution">
-              <option value="480p" selected>480p</option>
-              <option value="720p">720p</option>
-            </select>
-          </label>
-          <label>
-            <span>风格预设</span>
-            <select id="i2vPreset">
-              <option value="normal" selected>normal</option>
-              <option value="fun">fun</option>
-              <option value="spicy">spicy</option>
-              <option value="custom">custom</option>
-            </select>
-          </label>
+        <div class="card">
+          <div class="status-row">
+            <span id="i2vStatusText" class="status-pill">未连接</span>
+            <span id="i2vDuration" class="status-text">耗时 -</span>
+          </div>
+          <div id="i2vProgressBar" class="progress-track">
+            <div id="i2vProgressFill" class="progress-fill"></div>
+          </div>
+          <div id="i2vProgressText" class="progress-text">0%</div>
+          <div id="i2vStatus" class="status"></div>
+
+          <div class="meta-grid">
+            <div class="meta-item"><span>比例</span><strong id="i2vMetaAspect">-</strong></div>
+            <div class="meta-item"><span>时长</span><strong id="i2vMetaLength">-</strong></div>
+            <div class="meta-item"><span>分辨率</span><strong id="i2vMetaResolution">-</strong></div>
+            <div class="meta-item"><span>预设</span><strong id="i2vMetaPreset">-</strong></div>
+          </div>
         </div>
 
-        <div class="actions">
-          <input id="i2vImageFile" class="hidden" type="file" accept="image/*" />
-          <button id="i2vSelectImageBtn" class="btn btn-outline" type="button">上传参考图</button>
-          <button id="i2vClearImageBtn" class="btn btn-outline" type="button">清除参考图</button>
-          <span id="i2vImageFileName" class="file-name">未选择文件</span>
+        <div class="card">
+          <div id="i2vEmpty" class="empty">等待生成视频</div>
+          <div id="i2vStage" class="result-list hidden"></div>
         </div>
-
-        <div class="status-row">
-          <span id="i2vStatusText" class="status-pill">未连接</span>
-          <span id="i2vDuration" class="status">耗时 -</span>
-        </div>
-        <div id="i2vProgressBar" class="progress-track">
-          <div id="i2vProgressFill" class="progress-fill"></div>
-        </div>
-        <div id="i2vProgressText" class="progress-text">0%</div>
-        <div id="i2vStatus" class="status"></div>
-
-        <div class="meta-grid">
-          <div class="meta-item"><span>比例</span><strong id="i2vMetaAspect">-</strong></div>
-          <div class="meta-item"><span>时长</span><strong id="i2vMetaLength">-</strong></div>
-          <div class="meta-item"><span>分辨率</span><strong id="i2vMetaResolution">-</strong></div>
-          <div class="meta-item"><span>预设</span><strong id="i2vMetaPreset">-</strong></div>
-        </div>
-
-        <div id="i2vEmpty" class="text-block">等待生成视频。</div>
-        <div id="i2vStage" class="result-list hidden"></div>
       </div>
-    </section>
-
-    <section class="card">
-      <h2>作品库（SQLite）</h2>
-      <p class="tip">生图与图生图结果会自动入库，可在此查看与删除。</p>
-      <div class="actions">
-        <button id="galleryRefreshBtn" class="btn btn-outline">刷新作品库</button>
-      </div>
-      <div id="galleryStatus" class="status"></div>
-      <div id="galleryResult" class="result-grid"></div>
     </section>
   </main>
 
